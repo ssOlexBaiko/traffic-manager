@@ -8,10 +8,11 @@ import (
 	//"github.com/sirupsen/logrus"
 	//"fmt"
 	//"time"
-	"github.com/sirupsen/logrus"
 	"math/rand"
 	"sync"
 	"time"
+
+	"github.com/sirupsen/logrus"
 )
 
 var GlobalCars = make(chan int, 8)
