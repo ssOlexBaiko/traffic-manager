@@ -15,31 +15,40 @@ import (
 	"github.com/sirupsen/logrus"
 )
 
-var GlobalCars = make(chan int, 8)
+func inputsWorker(ctx context.Context, wg *sync.WaitGroup) <-chan int {
+	var GlobalCars = make(chan int, 8)
 
-func inputsWorker(wg *sync.WaitGroup) {
-	defer func(wg *sync.WaitGroup) {
-		logrus.Info("Car generator was stoped")
-		wg.Done()
-	}(wg)
 	logrus.Info("Car generator starting")
-	for i := 0; i < 16; i++ {
-		GlobalCars <- rand.Intn(5)
-		logrus.Info("Generate car: ", i)
-		time.Sleep(time.Second)
-	}
-	close(GlobalCars)
+	go func() {
+		defer func(wg *sync.WaitGroup) {
+			logrus.Info("Car generator was stoped")
+			close(GlobalCars)
+			wg.Done()
+		}(wg)
+
+		for i := 0; i < 16; i++ {
+			select {
+			case <-ctx.Done():
+				logrus.Info("Traffic receive ctx.Done signal. Waiting for roads")
+				return
+			case <-time.After(time.Second):
+				GlobalCars <- rand.Intn(5)
+				logrus.Info("Generate car: ", i)
+			}
+		}
+	}()
+	return GlobalCars
 }
 
-func outputsWorker(wg *sync.WaitGroup) {
+func outputsWorker(wg *sync.WaitGroup, inChan <-chan int) {
 	defer func(wg *sync.WaitGroup) {
 		logrus.Info("Car releaser was stoped")
 		wg.Done()
 	}(wg)
-	for i := range GlobalCars {
+
+	for i := range inChan {
 		logrus.Info("Release cars:", i)
 	}
-
 }
 
 func trafficWorker(ctx context.Context, wg *sync.WaitGroup) {
@@ -47,20 +56,21 @@ func trafficWorker(ctx context.Context, wg *sync.WaitGroup) {
 		logrus.Info("Traffic was stoped")
 		wg.Done()
 	}()
+
 	childWG := &sync.WaitGroup{}
 	childWG.Add(2)
-	go inputsWorker(childWG)
-	go outputsWorker(childWG)
+	inChan := inputsWorker(ctx, childWG)
+	go outputsWorker(childWG, inChan)
+
 	childWG.Wait()
-	<-ctx.Done()
-	logrus.Info("Traffic receive ctx.Done signal. Waiting for roads")
 }
 
 func main() {
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second*5)
+	defer cancel()
+
 	wg := &sync.WaitGroup{}
 	wg.Add(1)
 	go trafficWorker(ctx, wg)
-	cancel()
 	wg.Wait()
 }
