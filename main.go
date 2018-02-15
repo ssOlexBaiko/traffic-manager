@@ -4,6 +4,7 @@ import (
 	"context"
 	"sync"
 	"time"
+	"fmt"
 	"os"
 
 	"os/signal"
@@ -40,7 +41,9 @@ func main() {
 		Road{time.Second, 10},
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	circle := make(chan Car, 8)
+
+	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	go func() {
 		for {
@@ -54,83 +57,56 @@ func main() {
 		}
 	} ()
 	wg := &sync.WaitGroup{}
-	wg.Add(1)
-	go trafficWorker(inputRoads, outputRoads, ctx, wg)
+	wg.Add(8)
+	for _, road := range inputRoads {
+		go inputWorker(ctx, wg, road, circle)
+	}
+	for _, road := range outputRoads {
+		go outputWorker(ctx, wg, road, circle)
+	}
 	wg.Wait()
 }
 
-func trafficWorker(inputRoads, outputRoads Roads, ctx context.Context, wg *sync.WaitGroup) {
+func inputWorker(ctx context.Context, wg *sync.WaitGroup, road Road, circle chan Car) {
+	logrus.Info("Car generator starting")
+	ticker := time.NewTicker(road.Sleep / time.Duration(road.Cars))
 	defer func() {
-		logrus.Info("Traffic was stoped")
+		logrus.Info("Car generator was stoped")
+		close(circle)
+		ticker.Stop()
 		wg.Done()
 	}()
-	childWG := &sync.WaitGroup{}
-	childWG.Add(2)
-	circle := inputsWorker(ctx, childWG, inputRoads)
-	go outputsWorker(ctx, childWG, outputRoads, circle)
 
-	childWG.Wait()
-}
-
-//
-//
-func inputsWorker(ctx context.Context, wg *sync.WaitGroup, roads Roads) <-chan Car {
-	logrus.Info("Car generator starting")
-	circle := make(chan Car, 8)
-	go func() {
-		defer func(wg *sync.WaitGroup) {
-			logrus.Info("Car generator was stoped")
-			close(circle)
-			wg.Done()
-		}(wg)
-
-
-
-		for i := 0; ; i++ {
-			select {
-			case <-ctx.Done():
-				logrus.Info("Traffic receive ctx.Done signal. Waiting for roads")
-				return
-			case <-time.After(time.Second):
-				GlobalCars <- rand.Intn(5)
-				logrus.Info("Generate car: ", i)
-			}
+	for i := 0; ; i++ {
+		select {
+		case <-ctx.Done():
+			logrus.Info("Traffic receive ctx.Done signal. Waiting for roads")
+			return
+		case <-ticker.C:
+			carID := fmt.Sprintf("Car #%d from road #%d\n", i, road.Cars)
+			newCar := Car{carID, time.Now()}
+			circle <- newCar
+			logrus.Info("Generate car: ", i)
 		}
-	}()
-	return circle
+	}
 }
-//
-//func outputsWorker(wg *sync.WaitGroup, inChan <-chan int) {
-//	defer func(wg *sync.WaitGroup) {
-//		logrus.Info("Car releaser was stoped")
-//		wg.Done()
-//	}(wg)
-//
-//	for i := range inChan {
-//		logrus.Info("Release cars:", i)
-//	}
-//}
-//
-//func trafficWorker(ctx context.Context, wg *sync.WaitGroup) {
-//	defer func() {
-//		logrus.Info("Traffic was stoped")
-//		wg.Done()
-//	}()
-//
-//	childWG := &sync.WaitGroup{}
-//	childWG.Add(2)
-//	inChan := inputsWorker(ctx, childWG)
-//	go outputsWorker(childWG, inChan)
-//
-//	childWG.Wait()
-//}
-//
-//func main() {
-//	ctx, cancel := context.WithTimeout(context.Background(), time.Second*5)
-//	defer cancel()
-//
-//	wg := &sync.WaitGroup{}
-//	wg.Add(1)
-//	go trafficWorker(ctx, wg)
-//	wg.Wait()
-//}
+
+func outputWorker(ctx context.Context, wg *sync.WaitGroup, road Road, circle chan Car) {
+	defer func() {
+		logrus.Info("Car releaser was stoped")
+		wg.Done()
+	}()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		default:
+			for i := 0; i < road.Cars; i++ {
+				car := <-circle
+				fmt.Println("We took out off road ", car.ID)
+			}
+			time.Sleep(road.Sleep)
+		}
+	}
+}
