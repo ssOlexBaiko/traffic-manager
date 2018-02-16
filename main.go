@@ -2,25 +2,25 @@ package main
 
 import (
 	"context"
-	"sync"
-	"time"
 	"fmt"
 	"os"
+	"sync"
+	"time"
 
-	"os/signal"
 	"math/rand"
+	"os/signal"
 
 	"github.com/sirupsen/logrus"
 )
 
 type Car struct {
-	ID           string
-	Timing		 time.Time
+	ID     string
+	Timing time.Time
 }
 
 type Road struct {
-	Sleep	time.Duration
-	Cars	int
+	Sleep time.Duration
+	Cars  int
 }
 
 type Roads []Road
@@ -44,26 +44,28 @@ func main() {
 	circle := make(chan Car, 8)
 
 	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
 	go func() {
-		for {
-			select {
-			case _, ok := <- c:
-				if ok {
-					<-ctx.Done()
-					return
-				}
+		select {
+		case _, ok := <-c:
+			if ok {
+				cancel()
+				return
 			}
 		}
-	} ()
+	}()
 	wg := &sync.WaitGroup{}
-	wg.Add(8)
+	wg.Add(len(inputRoads) + len(outputRoads))
 	for _, road := range inputRoads {
 		go inputWorker(ctx, wg, road, circle)
 	}
+
 	for _, road := range outputRoads {
 		go outputWorker(ctx, wg, road, circle)
 	}
+
+	// TODO: Fix stop order
+	// TODO: Add traffic_circle
+
 	wg.Wait()
 }
 
@@ -72,7 +74,6 @@ func inputWorker(ctx context.Context, wg *sync.WaitGroup, road Road, circle chan
 	ticker := time.NewTicker(road.Sleep / time.Duration(road.Cars))
 	defer func() {
 		logrus.Info("Car generator was stoped")
-		close(circle)
 		ticker.Stop()
 		wg.Done()
 	}()
@@ -91,7 +92,7 @@ func inputWorker(ctx context.Context, wg *sync.WaitGroup, road Road, circle chan
 	}
 }
 
-func outputWorker(ctx context.Context, wg *sync.WaitGroup, road Road, circle chan Car) {
+func outputWorker(ctx context.Context, wg *sync.WaitGroup, road Road, circle <-chan Car) {
 	defer func() {
 		logrus.Info("Car releaser was stoped")
 		wg.Done()
